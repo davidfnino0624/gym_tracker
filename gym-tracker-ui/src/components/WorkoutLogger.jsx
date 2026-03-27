@@ -1,97 +1,312 @@
-import { useState } from 'react';
-import RestTimer from './RestTimer';
+import { useState, useEffect } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 
 function WorkoutLogger() {
-  // 1. Definición de Estados (Las variables que controlan la pantalla)
-  const [reps, setReps] = useState(10);
-  const [weight, setWeight] = useState(0);
-  const [unit, setUnit] = useState('lbs');
-  const [isResting, setIsResting] = useState(false); // Controla si mostramos el form o el timer
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const rutinaId = searchParams.get('rutina'); 
 
-  // 2. Lógica de Negocio
-  const handleCompleteSet = () => {
-    // Prevención de errores (Poka-yoke)
-    if (weight <= 0) {
-      alert("¡Ey! Añade algo de peso antes de guardar la serie.");
-      return; 
+  const [startTime] = useState(Date.now());
+
+  const [ejerciciosDb, setEjerciciosDb] = useState([]);
+  const [ejercicioActivo, setEjercicioActivo] = useState('');
+  const [nombreRutina, setNombreRutina] = useState('Cargando...');
+  
+  const [isAddingExercise, setIsAddingExercise] = useState(false);
+  const [newExerciseName, setNewExerciseName] = useState('');
+  const [newExerciseMuscle, setNewExerciseMuscle] = useState('Pecho'); 
+  
+  const [sets, setSets] = useState([]);
+  const [currentWeight, setCurrentWeight] = useState('');
+  const [currentReps, setCurrentReps] = useState('');
+  const [unit, setUnit] = useState('kg');
+
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [isTimerActive, setIsTimerActive] = useState(false);
+
+  // 🔥 NUEVO ESTADO: Para guardar el Récord Personal
+  const [marcaAVencer, setMarcaAVencer] = useState(null);
+
+  // Fetch de ejercicios
+  useEffect(() => {
+    const urlApi = rutinaId 
+      ? `http://localhost:8000/rutinas/${rutinaId}/ejercicios`
+      : 'http://localhost:8000/ejercicios';
+
+    fetch(urlApi)
+      .then((respuesta) => respuesta.json())
+      .then((datos) => {
+        setEjerciciosDb(datos);
+        if (datos.length > 0) {
+          setEjercicioActivo(datos[0].name); 
+        }
+      })
+      .catch((error) => console.error("Error trayendo datos:", error));
+  }, [rutinaId]);
+
+  // Fetch del nombre de la rutina
+  useEffect(() => {
+    if (rutinaId) {
+      fetch('http://localhost:8000/rutinas')
+        .then(res => res.json())
+        .then(datos => {
+          const rutinaEncontrada = datos.find(r => r.routine_id.toString() === rutinaId);
+          setNombreRutina(rutinaEncontrada ? rutinaEncontrada.name : '⚡ Entrenamiento Libre');
+        })
+        .catch(() => setNombreRutina('⚡ Entrenamiento Libre'));
+    } else {
+      setNombreRutina('⚡ Entrenamiento Libre');
     }
+  }, [rutinaId]);
 
-    // Estructuramos los datos que luego enviaremos a nuestra base de datos en PostgreSQL
-    const setData = {
-    reps: reps,
-    input_weight: weight,
-    weight_unit: unit,
-    // ¡Aquí añadimos la métrica estandarizada que SQL espera!
-    standardized_weight_kg: unit === 'lbs' ? weight * 0.453592 : weight
+  // Cronómetro
+  useEffect(() => {
+    let interval = null;
+    if (isTimerActive && timeLeft > 0) {
+      interval = setInterval(() => setTimeLeft((time) => time - 1), 1000);
+    } else if (timeLeft === 0 && isTimerActive) {
+      setIsTimerActive(false);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerActive, timeLeft]);
+
+  // 🔥 LA MARCA A VENCER REAL (El Radar)
+  // Cada vez que cambia el ejercicio activo, le preguntamos a Python por tu récord
+  useEffect(() => {
+    if (ejercicioActivo) {
+      fetch(`http://localhost:8000/marca?ejercicio=${encodeURIComponent(ejercicioActivo)}`)
+        .then(res => res.json())
+        .then(data => {
+          setMarcaAVencer(data); // Si no hay nada, data será null
+        })
+        .catch(err => {
+          console.error("Error trayendo marca:", err);
+          setMarcaAVencer(null);
+        });
+    }
+  }, [ejercicioActivo]);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const toggleUnit = () => setUnit(unit === 'kg' ? 'lbs' : 'kg');
+
+  const handleCrearEjercicio = () => {
+    if (newExerciseName.trim() === '') return;
+    const nuevoEjercicio = {
+      exercise_id: `temp_${Date.now()}`, 
+      name: newExerciseName,
+      muscle_group: newExerciseMuscle
+    };
+    setEjerciciosDb([...ejerciciosDb, nuevoEjercicio]);
+    setEjercicioActivo(nuevoEjercicio.name);
+    setIsAddingExercise(false);
+    setNewExerciseName('');
+  };
+
+  const addSet = () => {
+    if (currentWeight && currentReps) {
+      const seriesDeEsteEjercicio = sets.filter(s => s.exerciseName === ejercicioActivo).length;
+      setSets([...sets, { 
+        id: Date.now(), 
+        setNumber: seriesDeEsteEjercicio + 1, 
+        exerciseName: ejercicioActivo, 
+        weight: parseFloat(currentWeight), 
+        unit: unit, 
+        reps: parseInt(currentReps) 
+      }]);
+      setCurrentReps(''); 
+      setTimeLeft(90);
+      setIsTimerActive(true);
+    }
+  };
+
+  const finalizarEntrenamiento = async () => {
+    const duracionMinutos = Math.max(1, Math.round((Date.now() - startTime) / 60000));
+    const payloadSets = sets.map(s => {
+      return {
+        exercise_name: s.exerciseName, 
+        weight: s.weight,
+        reps: s.reps,
+        unit: s.unit
+      };
+    });
+
+    const payload = {
+      routine_id: rutinaId ? parseInt(rutinaId) : null,
+      duration_minutes: duracionMinutos,
+      sets: payloadSets
     };
 
-    console.log("Serie lista para enviar al backend:", setData);
-    setIsResting(true); // Cambiamos la vista al modo descanso
+    try {
+      const response = await fetch('http://localhost:8000/entrenamientos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        alert("¡Entrenamiento guardado en la base de datos como un campeón! 🏆");
+        navigate('/app'); 
+      } else {
+        const errorData = await response.json();
+        alert("Error guardando: " + errorData.detail);
+      }
+    } catch (error) {
+      console.error("Error de red:", error);
+      alert("Error de conexión con el servidor.");
+    }
   };
 
-  const toggleUnit = () => {
-    setUnit(unit === 'lbs' ? 'kg' : 'lbs');
-  };
+  const indiceActual = ejerciciosDb.findIndex(ej => ej.name === ejercicioActivo) + 1;
 
-  // 3. Vista de Descanso
-if (isResting) {
   return (
-    <RestTimer 
-      initialTime={90} // Minuto y medio por defecto
-      onSkip={() => setIsResting(false)} 
-    />
-  );
-}
+    <div style={styles.container}>
+      <header style={styles.header}>
+        <button onClick={() => navigate('/app')} style={styles.backBtn}>← Atrás</button>
+        <h2 style={styles.routineTitle}>{nombreRutina}</h2>
+      </header>
 
-  // 4. Vista Principal del Gimnasio
-  return (
-    <div style={styles.card}>
-      <h2 style={{ textAlign: 'center' }}>Sentadilla (Ejemplo)</h2>
-
-      {/* Control de Repeticiones */}
-      <div style={styles.controlGroup}>
-        <label>Repeticiones</label>
-        <div style={styles.row}>
-          <button onClick={() => setReps(reps > 1 ? reps - 1 : 1)} style={styles.circleBtn}>-</button>
-          <span style={styles.bigNumber}>{reps}</span>
-          <button onClick={() => setReps(reps + 1)} style={styles.circleBtn}>+</button>
+      <div style={styles.card}>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
+          <label style={styles.label}>Ejercicio Actual:</label>
+          
+          <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
+            {rutinaId && ejerciciosDb.length > 0 && !isAddingExercise && (
+               <span style={styles.progressBadge}>{indiceActual} de {ejerciciosDb.length}</span>
+            )}
+            <button 
+              onClick={() => setIsAddingExercise(!isAddingExercise)} 
+              style={isAddingExercise ? styles.cancelBtn : styles.addExerciseBtn}
+            >
+              {isAddingExercise ? '✕ Cancelar' : '+ Nuevo'}
+            </button>
+          </div>
         </div>
+
+        {isAddingExercise ? (
+          <div style={styles.newExerciseForm}>
+            <input type="text" placeholder="Ej. Curl de Bíceps en Máquina" value={newExerciseName} onChange={(e) => setNewExerciseName(e.target.value)} style={styles.inputDark} />
+            <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
+              <select value={newExerciseMuscle} onChange={(e) => setNewExerciseMuscle(e.target.value)} style={{...styles.dropdownDark, flex: 1, marginBottom: 0}}>
+                <option value="Pecho">Pecho</option><option value="Espalda">Espalda</option><option value="Pierna">Pierna</option><option value="Hombro">Hombro</option><option value="Bíceps">Bíceps</option><option value="Tríceps">Tríceps</option><option value="Core">Core</option><option value="Cardio">Cardio</option>
+              </select>
+              <button onClick={handleCrearEjercicio} style={styles.saveExerciseBtn}>Guardar</button>
+            </div>
+          </div>
+        ) : (
+          <select value={ejercicioActivo} onChange={(e) => setEjercicioActivo(e.target.value)} style={styles.dropdownDark}>
+            {ejerciciosDb.length === 0 ? <option>Cargando ejercicios...</option> : ejerciciosDb.map((ejercicio, index) => (
+                <option key={ejercicio.exercise_id} value={ejercicio.name}>{rutinaId ? `${index + 1}. ` : ''}{ejercicio.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
-      {/* Control de Peso y Unidad */}
-      <div style={styles.controlGroup}>
-        <label>Peso a levantar</label>
-        <div style={styles.row}>
-          <input 
-            type="number" 
-            value={weight} 
-            onChange={(e) => setWeight(Number(e.target.value))}
-            style={styles.input}
-          />
-          <button onClick={toggleUnit} style={styles.toggleBtn}>
-            {unit.toUpperCase()} 🔄
-          </button>
+      {!isAddingExercise && (
+        <div style={styles.targetCard}>
+          <p style={styles.targetTitle}>🎯 Marca a vencer en {ejercicioActivo}</p>
+          {marcaAVencer ? (
+            <p style={styles.targetNumbers}>{marcaAVencer.weight} {marcaAVencer.unit} × {marcaAVencer.reps} reps</p>
+          ) : (
+            <p style={{ color: '#9ca3af', margin: 0 }}>Sin registros previos. ¡Establece tu récord!</p>
+          )}
         </div>
+      )}
+
+      <div style={styles.card}>
+        <div style={styles.inputRow}>
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>Peso</label>
+            <div style={{ display: 'flex' }}>
+              <input type="number" value={currentWeight} onChange={(e) => setCurrentWeight(e.target.value)} style={styles.inputLeft} placeholder="Ej. 60"/>
+              <button onClick={toggleUnit} style={styles.unitToggle}>{unit}</button>
+            </div>
+          </div>
+          <div style={styles.inputGroup}>
+            <label style={styles.label}>Reps</label>
+            <input type="number" value={currentReps} onChange={(e) => setCurrentReps(e.target.value)} style={styles.inputField} placeholder="Ej. 10"/>
+          </div>
+        </div>
+        <button onClick={addSet} style={styles.addButton}>+ Completar Set</button>
       </div>
 
-      {/* Botón de Acción Principal */}
-      <button onClick={handleCompleteSet} style={styles.mainButton}>
-        Completar Serie y Descansar
-      </button>
+      {isTimerActive && (
+        <div style={styles.timerCard}>
+          <h3 style={styles.timerTitle}>⏱️ Descanso</h3>
+          <div style={styles.timerDisplay}>{formatTime(timeLeft)}</div>
+          <div style={styles.timerControls}>
+            <button onClick={() => setTimeLeft(t => Math.max(0, t - 30))} style={styles.timerBtn}>-30s</button>
+            <button onClick={() => setIsTimerActive(false)} style={styles.timerBtnSkip}>Saltar</button>
+            <button onClick={() => setTimeLeft(t => t + 30)} style={styles.timerBtn}>+30s</button>
+          </div>
+        </div>
+      )}
+
+      {sets.length > 0 && (
+        <div style={styles.setsContainer}>
+          <h3 style={styles.setsTitle}>Series Completadas</h3>
+          {sets.map((set) => (
+            <div key={set.id} style={styles.setRow}>
+              <div style={{display: 'flex', flexDirection: 'column', flex: 1}}>
+                <span style={styles.setExerciseName}>{set.exerciseName}</span>
+                <span style={styles.setNumber}>Set {set.setNumber}</span>
+              </div>
+              <span style={styles.setDetails}>{set.weight} {set.unit} × {set.reps}</span>
+              <span style={styles.checkIcon}>✅</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {sets.length > 0 && (
+        <button onClick={finalizarEntrenamiento} style={styles.finishButton}>🏁 Finalizar Entrenamiento</button>
+      )}
     </div>
   );
 }
 
-// Estilos rápidos para que sea funcional desde el día 1
+// 🎨 ESTILOS INTACTOS
 const styles = {
-  card: { maxWidth: '350px', margin: '20px auto', padding: '20px', borderRadius: '15px', boxShadow: '0 4px 8px rgba(0,0,0,0.1)', fontFamily: 'sans-serif' },
-  controlGroup: { margin: '20px 0', padding: '15px', backgroundColor: '#f5f5f5', borderRadius: '10px' },
-  row: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' },
-  circleBtn: { width: '40px', height: '40px', borderRadius: '50%', border: 'none', backgroundColor: '#ddd', fontSize: '20px', fontWeight: 'bold', cursor: 'pointer' },
-  bigNumber: { fontSize: '28px', fontWeight: 'bold' },
-  input: { width: '80px', fontSize: '24px', textAlign: 'center', padding: '5px', borderRadius: '8px', border: '1px solid #ccc' },
-  toggleBtn: { padding: '10px 15px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
-  mainButton: { width: '100%', padding: '15px', backgroundColor: '#28a745', color: 'white', fontSize: '16px', fontWeight: 'bold', border: 'none', borderRadius: '10px', marginTop: '10px', cursor: 'pointer' }
+  container: { padding: '20px 15px', width: '100%', boxSizing: 'border-box', margin: '0 auto', fontFamily: 'sans-serif', backgroundColor: '#111827', minHeight: '100vh', color: 'white' },
+  header: { display: 'flex', alignItems: 'center', marginBottom: '20px', gap: '15px' },
+  backBtn: { background: 'none', border: 'none', color: '#60a5fa', fontSize: '16px', cursor: 'pointer', padding: 0 },
+  routineTitle: { margin: 0, fontSize: '20px', color: '#f3f4f6', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  card: { backgroundColor: '#1f2937', padding: '20px', borderRadius: '12px', border: '1px solid #374151', marginBottom: '15px' },
+  label: { display: 'block', color: '#9ca3af', fontSize: '14px', marginBottom: '0' },
+  progressBadge: { backgroundColor: '#3b82f6', color: 'white', fontSize: '12px', padding: '4px 8px', borderRadius: '12px', fontWeight: 'bold' },
+  dropdownDark: { width: '100%', padding: '14px', borderRadius: '8px', border: '1px solid #4b5563', fontSize: '16px', backgroundColor: '#111827', color: 'white', marginBottom: '15px' },
+  addExerciseBtn: { background: 'rgba(16, 185, 129, 0.2)', color: '#10b981', border: '1px solid #10b981', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
+  cancelBtn: { background: 'rgba(239, 68, 68, 0.2)', color: '#ef4444', border: '1px solid #ef4444', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
+  newExerciseForm: { backgroundColor: '#111827', padding: '15px', borderRadius: '8px', border: '1px dashed #60a5fa', marginBottom: '15px' },
+  inputDark: { width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #4b5563', backgroundColor: '#1f2937', color: 'white', fontSize: '16px', boxSizing: 'border-box' },
+  saveExerciseBtn: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', padding: '0 20px', fontWeight: 'bold', cursor: 'pointer' },
+  targetCard: { backgroundColor: 'rgba(59, 130, 246, 0.1)', padding: '15px', borderRadius: '12px', border: '1px dashed #3b82f6', marginBottom: '20px', textAlign: 'center' },
+  targetTitle: { margin: '0 0 5px 0', color: '#60a5fa', fontSize: '14px', fontWeight: 'bold' },
+  targetNumbers: { margin: 0, color: '#fcd34d', fontSize: '20px', fontWeight: 'bold' },
+  inputRow: { display: 'flex', flexDirection: 'row', gap: '15px', marginBottom: '15px', width: '100%' },
+  inputGroup: { flex: 1, minWidth: 0 }, 
+  inputField: { width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #4b5563', backgroundColor: '#111827', color: 'white', fontSize: '18px', textAlign: 'center', boxSizing: 'border-box' },
+  inputLeft: { width: '100%', padding: '12px', borderRadius: '8px 0 0 8px', border: '1px solid #4b5563', borderRight: 'none', backgroundColor: '#111827', color: 'white', fontSize: '18px', textAlign: 'center', boxSizing: 'border-box', minWidth: 0 },
+  unitToggle: { width: '60px', padding: '12px 0', borderRadius: '0 8px 8px 0', border: '1px solid #4b5563', backgroundColor: '#374151', color: '#60a5fa', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', flexShrink: 0 },
+  addButton: { width: '100%', padding: '14px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer' },
+  timerCard: { backgroundColor: '#374151', padding: '20px', borderRadius: '12px', border: '1px solid #4b5563', marginBottom: '15px', textAlign: 'center' },
+  timerTitle: { margin: '0 0 10px 0', color: '#9ca3af', fontSize: '14px' },
+  timerDisplay: { fontSize: '48px', fontWeight: 'bold', color: '#fcd34d', margin: '10px 0', fontFamily: 'monospace' },
+  timerControls: { display: 'flex', justifyContent: 'center', gap: '10px' },
+  timerBtn: { backgroundColor: '#4b5563', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
+  timerBtnSkip: { backgroundColor: 'transparent', color: '#ef4444', border: '1px solid #ef4444', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
+  setsContainer: { marginTop: '10px', backgroundColor: '#1f2937', padding: '15px', borderRadius: '12px', border: '1px solid #374151' },
+  setsTitle: { margin: '0 0 15px 0', fontSize: '16px', color: '#9ca3af' },
+  setRow: { display: 'flex', justifyContent: 'space-between', padding: '12px', backgroundColor: '#374151', borderRadius: '8px', marginBottom: '8px', alignItems: 'center', gap: '10px' },
+  setExerciseName: { color: '#60a5fa', fontWeight: 'bold', fontSize: '15px', marginBottom: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  setNumber: { color: '#9ca3af', fontSize: '12px' },
+  setDetails: { color: 'white', fontSize: '16px', fontWeight: 'bold', whiteSpace: 'nowrap' },
+  checkIcon: { color: '#10b981', fontSize: '20px' },
+  finishButton: { width: '100%', padding: '16px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '18px', cursor: 'pointer', marginTop: '20px' }
 };
 
 export default WorkoutLogger;

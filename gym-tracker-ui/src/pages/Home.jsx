@@ -1,145 +1,157 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 
 function Home() {
-  const [bodyWeight, setBodyWeight] = useState(75.5);
-  const [targetExercise, setTargetExercise] = useState('sentadilla');
-  const [selectedRoutine, setSelectedRoutine] = useState(''); // Estado para la rutina seleccionada
+  const navigate = useNavigate();
+  
+  // 🔥 ESTADOS REALES DESDE LA BASE DE DATOS
+  const [resumen, setResumen] = useState({
+    peso_actual: 0,
+    ultimo_entreno: 'Cargando...',
+    total_entrenos: 0
+  });
+  
+  const [nuevoPeso, setNuevoPeso] = useState('');
+  const [rutinasDb, setRutinasDb] = useState([]);
+  const [selectedRoutine, setSelectedRoutine] = useState('');
 
-  // Simulamos las rutinas que vendrán de tu base de datos
-  const mockRoutines = [
-    { id: '1', name: '🔥 Día de Pierna Pesado' },
-    { id: '2', name: '💪 Empuje (Pecho/Tríceps)' },
-    { id: '3', name: '🦍 Tirón (Espalda/Bíceps)' }
-  ];
+  // 1. Traer el resumen y las rutinas al cargar la página
+  useEffect(() => {
+    // Fetch del Resumen (Peso, fechas, etc)
+    fetch('http://localhost:8000/resumen')
+      .then(res => res.json())
+      .then(data => setResumen(data))
+      .catch(err => console.error("Error trayendo resumen:", err));
 
-  const lastWorkoutData = {
-    sentadilla: { date: 'Hace 3 días', weight: 100, reps: 5, sets: 4 },
-    press_banca: { date: 'Hace 5 días', weight: 62.5, reps: 8, sets: 3 }
+    // Fetch de las Rutinas
+    fetch('http://localhost:8000/rutinas')
+      .then((respuesta) => respuesta.json())
+      .then((datos) => setRutinasDb(datos))
+      .catch((error) => console.error("Error trayendo rutinas:", error));
+  }, []);
+
+  const iniciarRutina = () => {
+    if (selectedRoutine) {
+      navigate(`/app/entrenar?rutina=${selectedRoutine}`);
+    }
   };
 
-  const currentTarget = lastWorkoutData[targetExercise];
+  // 🔥 2. Función para guardar el peso REAL en la base de datos
+  const registrarPeso = async (e) => {
+    e.preventDefault(); 
+    if(!nuevoPeso) return;
+
+    try {
+      const response = await fetch('http://localhost:8000/peso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peso: parseFloat(nuevoPeso) })
+      });
+
+      if(response.ok) {
+        // Actualizamos la UI al instante
+        setResumen({...resumen, peso_actual: parseFloat(nuevoPeso)});
+        setNuevoPeso('');
+      } else {
+        alert("Hubo un error guardando el peso");
+      }
+    } catch (error) {
+      console.error("Error conectando:", error);
+    }
+  };
 
   return (
     <div style={styles.container}>
       
-      {/* SECCIÓN 1: Perfil */}
-      <section style={styles.card}>
-        <div style={styles.profileHeader}>
-          <div style={styles.avatar}>👤</div>
-          <div>
-            <h2 style={{ margin: 0 }}>¡A romperla hoy!</h2>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '8px' }}>
-              <span style={{ color: '#666', fontSize: '14px' }}>Peso corporal:</span>
-              <input 
-                type="number" 
-                value={bodyWeight} 
-                onChange={(e) => setBodyWeight(e.target.value)}
-                style={styles.weightInput}
-              />
-              <span style={{ color: '#666', fontSize: '14px' }}>kg</span>
-            </div>
+      {/* 📊 SECCIÓN 1: Resumen del Atleta */}
+      <section style={styles.profileCard}>
+        <h2 style={{ margin: '0 0 15px 0', color: '#f3f4f6' }}>Tu Resumen 📈</h2>
+        
+        <div style={styles.statsGrid}>
+          <div style={styles.statBox}>
+            <p style={styles.statLabel}>Último Entreno</p>
+            <p style={styles.statValue}>{resumen.ultimo_entreno}</p>
+          </div>
+          
+          <div style={styles.statBox}>
+            <p style={styles.statLabel}>Peso Corporal</p>
+            <p style={styles.statValue}>{resumen.peso_actual} kg</p>
+          </div>
+
+          <div style={styles.statBox}>
+            <p style={styles.statLabel}>Entrenos Totales</p>
+            <p style={styles.statValue}>{resumen.total_entrenos}</p>
           </div>
         </div>
+
+        {/* Formulario de Peso Conectado */}
+        <form onSubmit={registrarPeso} style={styles.weightForm}>
+          <input 
+            type="number" 
+            step="0.1"
+            placeholder="Registrar nuevo peso (ej. 76.2)" 
+            value={nuevoPeso}
+            onChange={(e) => setNuevoPeso(e.target.value)}
+            style={styles.weightInput}
+          />
+          <button type="submit" style={styles.weightBtn}>Guardar</button>
+        </form>
       </section>
 
-      {/* SECCIÓN 2: Acciones Rápidas (AHORA CON SELECTOR DE RUTINAS) */}
+      {/* 🏋️‍♂️ SECCIÓN 2: ¿Qué hacemos hoy? */}
       <section style={styles.card}>
-        <h3 style={styles.sectionTitle}>Tu Sesión</h3>
+        <h3 style={{ margin: '0 0 15px 0', color: '#f3f4f6' }}>¿Qué entrenamos hoy?</h3>
+        
         <div style={styles.actionGrid}>
-          
           <Link to="/app/entrenar" style={styles.primaryAction}>
             ⚡ Iniciar Entrenamiento Libre
           </Link>
-          
-          <div style={styles.routineSelectorContainer}>
-            <select 
-              value={selectedRoutine} 
-              onChange={(e) => setSelectedRoutine(e.target.value)}
-              style={styles.routineDropdown}
-            >
-              <option value="" disabled>Selecciona una rutina guardada...</option>
-              {mockRoutines.map(routine => (
-                <option key={routine.id} value={routine.id}>{routine.name}</option>
-              ))}
-            </select>
-            
-            <button 
-              style={{
-                ...styles.startRoutineBtn, 
-                backgroundColor: selectedRoutine ? '#10b981' : '#d1d5db',
-                cursor: selectedRoutine ? 'pointer' : 'not-allowed'
-              }}
-              disabled={!selectedRoutine}
-            >
-              🏋️ Empezar Rutina
+
+          <select 
+            value={selectedRoutine} 
+            onChange={(e) => setSelectedRoutine(e.target.value)} 
+            style={styles.routineDropdown}
+          >
+            <option value="" disabled>Selecciona una rutina guardada...</option>
+            {rutinasDb.length === 0 ? (
+              <option disabled>Cargando tus rutinas...</option>
+            ) : (
+              rutinasDb.map((rutina) => (
+                <option key={rutina.routine_id} value={rutina.routine_id}>
+                  {rutina.name}
+                </option>
+              ))
+            )}
+          </select>
+
+          {selectedRoutine && (
+            <button onClick={iniciarRutina} style={styles.successAction}>
+              ▶️ Empezar Rutina Seleccionada
             </button>
-          </div>
-
-          <button style={styles.secondaryAction}>📋 Crear Nueva Rutina</button>
+          )}
         </div>
-      </section>
-
-      {/* SECCIÓN 3: Meta del Día */}
-      <section style={styles.highlightCard}>
-        <h3 style={{ ...styles.sectionTitle, color: 'white' }}>🎯 Tu marca a vencer</h3>
-        <select 
-          value={targetExercise} 
-          onChange={(e) => setTargetExercise(e.target.value)}
-          style={styles.dropdownDark}
-        >
-          <option value="sentadilla">Sentadilla</option>
-          <option value="press_banca">Press de Banca</option>
-        </select>
-
-        {currentTarget ? (
-          <div style={styles.targetInfo}>
-            <p style={styles.lastDate}>Última vez: {currentTarget.date}</p>
-            <div style={styles.targetNumbers}>
-              <span style={styles.bigNumber}>{currentTarget.weight} <small>kg</small></span>
-              <span style={styles.multiplier}>×</span>
-              <span style={styles.bigNumber}>{currentTarget.reps} <small>reps</small></span>
-            </div>
-            <p style={styles.targetSets}>Completaste {currentTarget.sets} series.</p>
-            <div style={styles.motivationBanner}>
-              ¡Intenta subirle 2.5 kg o sacar 1 rep extra hoy! 🔥
-            </div>
-          </div>
-        ) : (
-          <p style={{ color: 'white' }}>No hay registros previos.</p>
-        )}
       </section>
 
     </div>
   );
 }
 
-// Estilos actualizados con las nuevas clases
+// 🎨 ESTILOS (Añadí soporte para la 3ra cajita de stats)
 const styles = {
-  container: { padding: '15px', maxWidth: '500px', margin: '0 auto', fontFamily: 'sans-serif' },
-  card: { backgroundColor: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', marginBottom: '20px' },
-  highlightCard: { backgroundColor: '#1f2937', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', marginBottom: '20px', color: 'white' },
-  profileHeader: { display: 'flex', alignItems: 'center', gap: '15px' },
-  avatar: { fontSize: '40px', backgroundColor: '#f3f4f6', borderRadius: '50%', padding: '10px' },
-  weightInput: { width: '50px', padding: '4px', borderRadius: '4px', border: '1px solid #ccc', textAlign: 'center' },
-  sectionTitle: { margin: '0 0 15px 0', fontSize: '18px' },
-  actionGrid: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  primaryAction: { padding: '15px', backgroundColor: '#3b82f6', color: 'white', textAlign: 'center', textDecoration: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '16px' },
-  
-  // Nuevos estilos para el selector de rutinas
-  routineSelectorContainer: { display: 'flex', flexDirection: 'column', gap: '8px', padding: '15px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px' },
-  routineDropdown: { padding: '12px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '15px', width: '100%', backgroundColor: 'white' },
-  startRoutineBtn: { padding: '12px', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '15px' },
-  
-  secondaryAction: { padding: '12px', backgroundColor: 'transparent', border: '1px solid #d1d5db', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', color: '#4b5563' },
-  dropdownDark: { width: '100%', padding: '12px', borderRadius: '8px', border: 'none', marginBottom: '15px', fontSize: '16px', backgroundColor: '#374151', color: 'white', fontWeight: 'bold' },
-  targetInfo: { textAlign: 'center', marginTop: '10px' },
-  lastDate: { color: '#9ca3af', fontSize: '14px', margin: '0 0 10px 0' },
-  targetNumbers: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginBottom: '10px' },
-  bigNumber: { fontSize: '32px', fontWeight: '900', color: '#10b981' },
-  multiplier: { fontSize: '24px', color: '#6b7280' },
-  targetSets: { color: '#d1d5db', margin: '0 0 15px 0' },
-  motivationBanner: { backgroundColor: '#374151', padding: '10px', borderRadius: '8px', fontSize: '14px', fontWeight: 'bold', color: '#fcd34d' }
+  container: { padding: '20px 15px', width: '100%', boxSizing: 'border-box', margin: '0 auto', fontFamily: 'sans-serif', backgroundColor: '#111827', minHeight: '100vh' },
+  profileCard: { backgroundColor: '#1f2937', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', marginBottom: '20px', border: '1px solid #4b5563' },
+  card: { backgroundColor: '#1f2937', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)', border: '1px solid #374151' },
+  statsGrid: { display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '20px' }, // FlexWrap para que no se apriete en celulares
+  statBox: { flex: '1 1 30%', backgroundColor: '#374151', padding: '15px 10px', borderRadius: '8px', textAlign: 'center', minWidth: '100px' },
+  statLabel: { margin: '0 0 5px 0', color: '#9ca3af', fontSize: '12px', fontWeight: 'bold', textTransform: 'uppercase' },
+  statValue: { margin: '0', color: '#10b981', fontSize: '18px', fontWeight: 'bold' },
+  weightForm: { display: 'flex', gap: '10px' },
+  weightInput: { flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #4b5563', backgroundColor: '#111827', color: 'white', fontSize: '15px', minWidth: 0 },
+  weightBtn: { padding: '12px 20px', backgroundColor: '#6366f1', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', flexShrink: 0 },
+  actionGrid: { display: 'flex', flexDirection: 'column', gap: '15px' },
+  primaryAction: { padding: '15px', backgroundColor: '#3b82f6', color: 'white', textAlign: 'center', textDecoration: 'none', borderRadius: '8px', fontWeight: 'bold', display: 'block' },
+  successAction: { padding: '15px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '16px', cursor: 'pointer' },
+  routineDropdown: { padding: '14px', borderRadius: '8px', border: '1px solid #4b5563', fontSize: '15px', backgroundColor: '#374151', color: '#f3f4f6', cursor: 'pointer' },
 };
 
 export default Home;
