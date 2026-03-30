@@ -5,102 +5,92 @@ function WorkoutLogger() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const rutinaId = searchParams.get('rutina'); 
-
   const [startTime] = useState(Date.now());
 
   const [ejerciciosDb, setEjerciciosDb] = useState([]);
   const [ejercicioActivo, setEjercicioActivo] = useState('');
   const [nombreRutina, setNombreRutina] = useState('Cargando...');
-  
   const [isAddingExercise, setIsAddingExercise] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState('');
   const [newExerciseMuscle, setNewExerciseMuscle] = useState('Pecho'); 
-  
   const [sets, setSets] = useState([]);
   const [currentWeight, setCurrentWeight] = useState('');
   const [currentReps, setCurrentReps] = useState('');
   const [unit, setUnit] = useState('kg');
-
   const [timeLeft, setTimeLeft] = useState(0);
   const [isTimerActive, setIsTimerActive] = useState(false);
-
-  // 🔥 NUEVO ESTADO: Para guardar el Récord Personal
   const [marcaAVencer, setMarcaAVencer] = useState(null);
 
-  // Fetch de ejercicios
-  useEffect(() => {
-    const urlApi = rutinaId 
-      ? `http://localhost:8000/rutinas/${rutinaId}/ejercicios`
-      : 'http://localhost:8000/ejercicios';
+  // Helper de seguridad
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem('gym_token');
+    if (!token) { navigate('/login'); return null; }
+    return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+  };
 
-    fetch(urlApi)
-      .then((respuesta) => respuesta.json())
-      .then((datos) => {
-        setEjerciciosDb(datos);
-        if (datos.length > 0) {
-          setEjercicioActivo(datos[0].name); 
+  useEffect(() => {
+    const headers = getAuthHeaders();
+    if (!headers) return;
+
+    // Le preguntamos primero por los ejercicios específicos de la rutina
+    const urlApi = rutinaId ? `http://localhost:8000/rutinas/${rutinaId}/ejercicios` : 'http://localhost:8000/ejercicios';
+    
+    fetch(urlApi, { headers })
+      .then(res => res.json())
+      .then(data => {
+        if (data.length > 0) {
+          // Si la rutina ya tiene ejercicios, los usamos
+          setEjerciciosDb(data);
+          setEjercicioActivo(data[0].name); 
+        } else if (rutinaId) {
+          // 🔥 EL TRUCO: Si la rutina es nueva y está vacía, le traemos TODO el catálogo global
+          fetch('http://localhost:8000/ejercicios', { headers })
+            .then(res2 => res2.json())
+            .then(dataGlobal => {
+              setEjerciciosDb(dataGlobal);
+              if (dataGlobal.length > 0) setEjercicioActivo(dataGlobal[0].name);
+            });
         }
       })
-      .catch((error) => console.error("Error trayendo datos:", error));
-  }, [rutinaId]);
+      .catch(console.error);
 
-  // Fetch del nombre de la rutina
-  useEffect(() => {
+    // Fetch para traer el nombre de la rutina (esto se queda igual)
     if (rutinaId) {
-      fetch('http://localhost:8000/rutinas')
+      fetch('http://localhost:8000/rutinas', { headers })
         .then(res => res.json())
         .then(datos => {
-          const rutinaEncontrada = datos.find(r => r.routine_id.toString() === rutinaId);
-          setNombreRutina(rutinaEncontrada ? rutinaEncontrada.name : '⚡ Entrenamiento Libre');
-        })
-        .catch(() => setNombreRutina('⚡ Entrenamiento Libre'));
+          const r = datos.find(d => d.routine_id.toString() === rutinaId);
+          setNombreRutina(r ? r.name : '⚡ Entrenamiento Libre');
+        }).catch(() => setNombreRutina('⚡ Entrenamiento Libre'));
     } else {
       setNombreRutina('⚡ Entrenamiento Libre');
     }
-  }, [rutinaId]);
+  }, [rutinaId, navigate]);
 
-  // Cronómetro
   useEffect(() => {
     let interval = null;
-    if (isTimerActive && timeLeft > 0) {
-      interval = setInterval(() => setTimeLeft((time) => time - 1), 1000);
-    } else if (timeLeft === 0 && isTimerActive) {
-      setIsTimerActive(false);
-    }
+    if (isTimerActive && timeLeft > 0) interval = setInterval(() => setTimeLeft((t) => t - 1), 1000);
+    else if (timeLeft === 0 && isTimerActive) setIsTimerActive(false);
     return () => clearInterval(interval);
   }, [isTimerActive, timeLeft]);
 
-  // 🔥 LA MARCA A VENCER REAL (El Radar)
-  // Cada vez que cambia el ejercicio activo, le preguntamos a Python por tu récord
   useEffect(() => {
     if (ejercicioActivo) {
-      fetch(`http://localhost:8000/marca?ejercicio=${encodeURIComponent(ejercicioActivo)}`)
-        .then(res => res.json())
-        .then(data => {
-          setMarcaAVencer(data); // Si no hay nada, data será null
-        })
-        .catch(err => {
-          console.error("Error trayendo marca:", err);
-          setMarcaAVencer(null);
-        });
-    }
-  }, [ejercicioActivo]);
+      const headers = getAuthHeaders();
+      if (!headers) return;
 
-  const formatTime = (seconds) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-  };
+      fetch(`http://localhost:8000/marca?ejercicio=${encodeURIComponent(ejercicioActivo)}`, { headers })
+        .then(res => res.json())
+        .then(data => setMarcaAVencer(data))
+        .catch(() => setMarcaAVencer(null));
+    }
+  }, [ejercicioActivo, navigate]);
 
   const toggleUnit = () => setUnit(unit === 'kg' ? 'lbs' : 'kg');
 
   const handleCrearEjercicio = () => {
     if (newExerciseName.trim() === '') return;
-    const nuevoEjercicio = {
-      exercise_id: `temp_${Date.now()}`, 
-      name: newExerciseName,
-      muscle_group: newExerciseMuscle
-    };
+    const nuevoEjercicio = { exercise_id: `temp_${Date.now()}`, name: newExerciseName, muscle_group: newExerciseMuscle };
     setEjerciciosDb([...ejerciciosDb, nuevoEjercicio]);
     setEjercicioActivo(nuevoEjercicio.name);
     setIsAddingExercise(false);
@@ -109,45 +99,23 @@ function WorkoutLogger() {
 
   const addSet = () => {
     if (currentWeight && currentReps) {
-      const seriesDeEsteEjercicio = sets.filter(s => s.exerciseName === ejercicioActivo).length;
-      setSets([...sets, { 
-        id: Date.now(), 
-        setNumber: seriesDeEsteEjercicio + 1, 
-        exerciseName: ejercicioActivo, 
-        weight: parseFloat(currentWeight), 
-        unit: unit, 
-        reps: parseInt(currentReps) 
-      }]);
-      setCurrentReps(''); 
-      setTimeLeft(90);
-      setIsTimerActive(true);
+      setSets([...sets, { id: Date.now(), setNumber: sets.filter(s => s.exerciseName === ejercicioActivo).length + 1, exerciseName: ejercicioActivo, weight: parseFloat(currentWeight), unit: unit, reps: parseInt(currentReps) }]);
+      setCurrentReps(''); setTimeLeft(90); setIsTimerActive(true);
     }
   };
 
   const finalizarEntrenamiento = async () => {
-    const duracionMinutos = Math.max(1, Math.round((Date.now() - startTime) / 60000));
-    const payloadSets = sets.map(s => {
-      return {
-        exercise_name: s.exerciseName, 
-        weight: s.weight,
-        reps: s.reps,
-        unit: s.unit
-      };
-    });
+    const headers = getAuthHeaders();
+    if (!headers) return;
 
     const payload = {
       routine_id: rutinaId ? parseInt(rutinaId) : null,
-      duration_minutes: duracionMinutos,
-      sets: payloadSets
+      duration_minutes: Math.max(1, Math.round((Date.now() - startTime) / 60000)),
+      sets: sets.map(s => ({ exercise_name: s.exerciseName, weight: s.weight, reps: s.reps, unit: s.unit }))
     };
 
     try {
-      const response = await fetch('http://localhost:8000/entrenamientos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
+      const response = await fetch('http://localhost:8000/entrenamientos', { method: 'POST', headers, body: JSON.stringify(payload) });
       if (response.ok) {
         alert("¡Entrenamiento guardado en la base de datos como un campeón! 🏆");
         navigate('/app'); 
@@ -155,13 +123,11 @@ function WorkoutLogger() {
         const errorData = await response.json();
         alert("Error guardando: " + errorData.detail);
       }
-    } catch (error) {
-      console.error("Error de red:", error);
-      alert("Error de conexión con el servidor.");
-    }
+    } catch (error) { alert("Error de conexión con el servidor."); }
   };
 
   const indiceActual = ejerciciosDb.findIndex(ej => ej.name === ejercicioActivo) + 1;
+  const formatTime = (seconds) => `${Math.floor(seconds / 60)}:${seconds % 60 < 10 ? '0' : ''}${seconds % 60}`;
 
   return (
     <div style={styles.container}>
@@ -173,15 +139,9 @@ function WorkoutLogger() {
       <div style={styles.card}>
         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
           <label style={styles.label}>Ejercicio Actual:</label>
-          
           <div style={{display: 'flex', gap: '10px', alignItems: 'center'}}>
-            {rutinaId && ejerciciosDb.length > 0 && !isAddingExercise && (
-               <span style={styles.progressBadge}>{indiceActual} de {ejerciciosDb.length}</span>
-            )}
-            <button 
-              onClick={() => setIsAddingExercise(!isAddingExercise)} 
-              style={isAddingExercise ? styles.cancelBtn : styles.addExerciseBtn}
-            >
+            {rutinaId && ejerciciosDb.length > 0 && !isAddingExercise && ( <span style={styles.progressBadge}>{indiceActual} de {ejerciciosDb.length}</span> )}
+            <button onClick={() => setIsAddingExercise(!isAddingExercise)} style={isAddingExercise ? styles.cancelBtn : styles.addExerciseBtn}>
               {isAddingExercise ? '✕ Cancelar' : '+ Nuevo'}
             </button>
           </div>
@@ -189,18 +149,18 @@ function WorkoutLogger() {
 
         {isAddingExercise ? (
           <div style={styles.newExerciseForm}>
-            <input type="text" placeholder="Ej. Curl de Bíceps en Máquina" value={newExerciseName} onChange={(e) => setNewExerciseName(e.target.value)} style={styles.inputDark} />
+            <input type="text" placeholder="Ej. Curl de Bíceps" value={newExerciseName} onChange={(e) => setNewExerciseName(e.target.value)} style={styles.inputDark} />
             <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
               <select value={newExerciseMuscle} onChange={(e) => setNewExerciseMuscle(e.target.value)} style={{...styles.dropdownDark, flex: 1, marginBottom: 0}}>
-                <option value="Pecho">Pecho</option><option value="Espalda">Espalda</option><option value="Pierna">Pierna</option><option value="Hombro">Hombro</option><option value="Bíceps">Bíceps</option><option value="Tríceps">Tríceps</option><option value="Core">Core</option><option value="Cardio">Cardio</option>
+                <option value="Pecho">Pecho</option><option value="Espalda">Espalda</option><option value="Pierna">Pierna</option><option value="Hombro">Hombro</option><option value="Bíceps">Bíceps</option><option value="Tríceps">Tríceps</option><option value="Core">Core</option>
               </select>
               <button onClick={handleCrearEjercicio} style={styles.saveExerciseBtn}>Guardar</button>
             </div>
           </div>
         ) : (
           <select value={ejercicioActivo} onChange={(e) => setEjercicioActivo(e.target.value)} style={styles.dropdownDark}>
-            {ejerciciosDb.length === 0 ? <option>Cargando ejercicios...</option> : ejerciciosDb.map((ejercicio, index) => (
-                <option key={ejercicio.exercise_id} value={ejercicio.name}>{rutinaId ? `${index + 1}. ` : ''}{ejercicio.name}</option>
+            {ejerciciosDb.length === 0 ? <option>Cargando...</option> : ejerciciosDb.map((ej, index) => (
+                <option key={ej.exercise_id} value={ej.name}>{rutinaId ? `${index + 1}. ` : ''}{ej.name}</option>
             ))}
           </select>
         )}
@@ -209,11 +169,7 @@ function WorkoutLogger() {
       {!isAddingExercise && (
         <div style={styles.targetCard}>
           <p style={styles.targetTitle}>🎯 Marca a vencer en {ejercicioActivo}</p>
-          {marcaAVencer ? (
-            <p style={styles.targetNumbers}>{marcaAVencer.weight} {marcaAVencer.unit} × {marcaAVencer.reps} reps</p>
-          ) : (
-            <p style={{ color: '#9ca3af', margin: 0 }}>Sin registros previos. ¡Establece tu récord!</p>
-          )}
+          {marcaAVencer ? ( <p style={styles.targetNumbers}>{marcaAVencer.weight} {marcaAVencer.unit} × {marcaAVencer.reps} reps</p> ) : ( <p style={{ color: '#9ca3af', margin: 0 }}>Sin registros previos.</p> )}
         </div>
       )}
 
@@ -221,14 +177,11 @@ function WorkoutLogger() {
         <div style={styles.inputRow}>
           <div style={styles.inputGroup}>
             <label style={styles.label}>Peso</label>
-            <div style={{ display: 'flex' }}>
-              <input type="number" value={currentWeight} onChange={(e) => setCurrentWeight(e.target.value)} style={styles.inputLeft} placeholder="Ej. 60"/>
-              <button onClick={toggleUnit} style={styles.unitToggle}>{unit}</button>
-            </div>
+            <div style={{ display: 'flex' }}><input type="number" value={currentWeight} onChange={(e) => setCurrentWeight(e.target.value)} style={styles.inputLeft} /><button onClick={toggleUnit} style={styles.unitToggle}>{unit}</button></div>
           </div>
           <div style={styles.inputGroup}>
             <label style={styles.label}>Reps</label>
-            <input type="number" value={currentReps} onChange={(e) => setCurrentReps(e.target.value)} style={styles.inputField} placeholder="Ej. 10"/>
+            <input type="number" value={currentReps} onChange={(e) => setCurrentReps(e.target.value)} style={styles.inputField} />
           </div>
         </div>
         <button onClick={addSet} style={styles.addButton}>+ Completar Set</button>
@@ -251,25 +204,17 @@ function WorkoutLogger() {
           <h3 style={styles.setsTitle}>Series Completadas</h3>
           {sets.map((set) => (
             <div key={set.id} style={styles.setRow}>
-              <div style={{display: 'flex', flexDirection: 'column', flex: 1}}>
-                <span style={styles.setExerciseName}>{set.exerciseName}</span>
-                <span style={styles.setNumber}>Set {set.setNumber}</span>
-              </div>
-              <span style={styles.setDetails}>{set.weight} {set.unit} × {set.reps}</span>
-              <span style={styles.checkIcon}>✅</span>
+              <div style={{display: 'flex', flexDirection: 'column', flex: 1}}><span style={styles.setExerciseName}>{set.exerciseName}</span><span style={styles.setNumber}>Set {set.setNumber}</span></div>
+              <span style={styles.setDetails}>{set.weight} {set.unit} × {set.reps}</span><span style={styles.checkIcon}>✅</span>
             </div>
           ))}
         </div>
       )}
-
-      {sets.length > 0 && (
-        <button onClick={finalizarEntrenamiento} style={styles.finishButton}>🏁 Finalizar Entrenamiento</button>
-      )}
+      {sets.length > 0 && ( <button onClick={finalizarEntrenamiento} style={styles.finishButton}>🏁 Finalizar Entrenamiento</button> )}
     </div>
   );
 }
 
-// 🎨 ESTILOS INTACTOS
 const styles = {
   container: { padding: '20px 15px', width: '100%', boxSizing: 'border-box', margin: '0 auto', fontFamily: 'sans-serif', backgroundColor: '#111827', minHeight: '100vh', color: 'white' },
   header: { display: 'flex', alignItems: 'center', marginBottom: '20px', gap: '15px' },

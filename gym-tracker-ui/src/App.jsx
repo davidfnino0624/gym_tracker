@@ -2,12 +2,16 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 
 // 1. Importamos todas nuestras pantallas (Páginas)
 import Landing from './pages/Landing';
-import Auth from './pages/Auth';
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
+import Login from './pages/Login';
+
+// 🔥 IMPORTACIÓN NUEVA: Traemos la tienda
+import Market from './pages/Market'; 
 
 // 2. Importamos nuestros componentes sueltos
-import WorkoutLogger from './components/WorkoutLogger';
+// (Ojo: Asegúrate de que WorkoutLogger siga en la carpeta /components)
+import WorkoutLogger from './components/WorkoutLogger'; 
 
 // 3. Componente Layout: Controla cuándo mostrar el menú superior
 function Layout() {
@@ -25,6 +29,9 @@ function Layout() {
           <Link to="/app" style={styles.link}>🏠 Inicio</Link>
           <Link to="/app/entrenar" style={styles.link}>💪 Entrenar</Link>
           <Link to="/app/dashboard" style={styles.link}>📈 Análisis</Link>
+          
+          {/* 🔥 NUEVO ENLACE: Ahora la tienda está en el menú de arriba */}
+          <Link to="/app/tienda" style={styles.link}>🛍️ Tienda</Link>
         </nav>
       )}
 
@@ -32,12 +39,15 @@ function Layout() {
       <Routes>
         {/* Mundo Público */}
         <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Auth />} />
+        <Route path="/login" element={<Login />} />
 
         {/* Mundo Privado */}
         <Route path="/app" element={<Home />} />
         <Route path="/app/entrenar" element={<WorkoutLogger />} />
         <Route path="/app/dashboard" element={<Dashboard />} />
+        
+        {/* 🔥 NUEVA RUTA: Le decimos a React qué mostrar cuando vayan a /app/tienda */}
+        <Route path="/app/tienda" element={<Market />} />
       </Routes>
       
     </div>
@@ -56,24 +66,29 @@ function App() {
 // Estilos globales de la App
 const styles = {
   appContainer: { 
-    maxWidth: '500px', 
+    // 🔥 MEJORA: Quité el ancho máximo para que use toda la pantalla y puse el fondo Dark Mode
     margin: '0 auto', 
-    backgroundColor: '#f9fafb', 
+    backgroundColor: '#111827', 
     minHeight: '100vh',
-    fontFamily: 'sans-serif'
+    fontFamily: 'sans-serif',
+    color: 'white'
   },
   navbar: { 
     display: 'flex', 
     justifyContent: 'space-around', 
     backgroundColor: '#1f2937', 
     padding: '15px 0',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+    boxShadow: '0 4px 6px rgba(0,0,0,0.3)', // Sombra más pronunciada
+    borderBottom: '1px solid #374151' // Bordecito sutil para separar el menú
   },
   link: { 
-    color: 'white', 
+    color: '#f3f4f6', 
     textDecoration: 'none', 
     fontWeight: 'bold', 
-    fontSize: '16px' 
+    fontSize: '14px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px' // Espacio entre el emoji y el texto
   }
 };
 
